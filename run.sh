@@ -7,15 +7,16 @@
 #   ./run.sh --check-only # Only verify the environment, do not run
 #   ./run.sh --help       # Show this help
 #
-# All configuration for heat_budget_rd_lme.py is declared here as exported
-# environment variables.  Edit this file to change paths, regions, ensembles,
-# run names, or date ranges – the Python script itself requires no edits.
+# All configuration is declared in this file.  The Python script
+# heat_budget_rd_lme.py processes exactly one run/date combination per
+# invocation; this script loops over all ensembles, members, and date
+# chunks and calls Python once per combination.
 # =============================================================================
 
 set -euo pipefail
 
 # ---------------------------------------------------------------------------
-# Configuration – all values forwarded to heat_budget_rd_lme.py
+# Configuration – edit this section to change paths, regions, or run lists
 # ---------------------------------------------------------------------------
 
 # Base directory containing per-variable time-series NetCDF files.
@@ -36,53 +37,59 @@ export REF_COL="150"
 # Region of interest: "lat_min lat_max lon_min lon_max".
 export REGBOX="-10 10 90 300"
 
-# Ensemble loop bounds (0-indexed, Python range convention: [EE_START, EE_END) ).
-# Default processes only ensemble index 5 (Solar), member index 4 – the same
-# single-member subset that matched the original MATLAB script (ee=6, rr=5 in
-# 1-indexed notation).  Set EE_START=0 / EE_END=8 to process all ensembles.
-export EE_START="5"
-export EE_END="6"
+# ---------------------------------------------------------------------------
+# Ensemble / run name definitions
+# Each ensemble has a matching runs_<EnsName> array.  Use "" as a placeholder
+# for missing members so the index layout is preserved.
+# ---------------------------------------------------------------------------
+ensnames=("Full" "GHG" "LULC" "Orbital" "Solar" "Volcanic" "OzoneAer" "Control")
 
-# Member loop bounds (0-indexed, Python range convention: [RR_START, RR_END) ).
-export RR_START="4"
-export RR_END="5"
+runs_Full=(
+    "b.e11.BLMTRC5CN.f19_g16.001" "b.e11.BLMTRC5CN.f19_g16.002"
+    "b.e11.BLMTRC5CN.f19_g16.003" "b.e11.BLMTRC5CN.f19_g16.004"
+    "b.e11.BLMTRC5CN.f19_g16.005" "b.e11.BLMTRC5CN.f19_g16.006"
+    "b.e11.BLMTRC5CN.f19_g16.007" "b.e11.BLMTRC5CN.f19_g16.008"
+    "b.e11.BLMTRC5CN.f19_g16.009" "b.e11.BLMTRC5CN.f19_g16.010"
+    "b.e11.BLMTRC5CN.f19_g16.011" "b.e11.BLMTRC5CN.f19_g16.012"
+    "b.e11.BLMTRC5CN.f19_g16.013"
+)
+runs_GHG=(
+    "b.e11.BLMTRC5CN.f19_g16.GHG.001" "b.e11.BLMTRC5CN.f19_g16.GHG.002"
+    "b.e11.BLMTRC5CN.f19_g16.GHG.003"
+)
+runs_LULC=(
+    "b.e11.BLMTRC5CN.f19_g16.LULC_HurttPongratz.001"
+    "b.e11.BLMTRC5CN.f19_g16.LULC_HurttPongratz.002"
+    "b.e11.BLMTRC5CN.f19_g16.LULC_HurttPongratz.003"
+)
+runs_Orbital=(
+    "b.e11.BLMTRC5CN.f19_g16.ORBITAL.001" "b.e11.BLMTRC5CN.f19_g16.ORBITAL.002"
+    "b.e11.BLMTRC5CN.f19_g16.ORBITAL.003"
+)
+runs_Solar=(
+    "b.e11.BLMTRC5CN.f19_g16.SSI_VSK_L.001" "b.e11.BLMTRC5CN.f19_g16.SSI_VSK_L.003"
+    "b.e11.BLMTRC5CN.f19_g16.SSI_VSK_L.004" "b.e11.BLMTRC5CN.f19_g16.SSI_VSK_L.005"
+)
+runs_Volcanic=(
+    "b.e11.BLMTRC5CN.f19_g16.VOLC_GRA.001" "b.e11.BLMTRC5CN.f19_g16.VOLC_GRA.002"
+    "b.e11.BLMTRC5CN.f19_g16.VOLC_GRA.003" "b.e11.BLMTRC5CN.f19_g16.VOLC_GRA.004"
+    "b.e11.BLMTRC5CN.f19_g16.VOLC_GRA.005"
+)
+runs_OzoneAer=(
+    "b.e11.BLMTRC5CN.f19_g16.OZONE_AER.001" "b.e11.BLMTRC5CN.f19_g16.OZONE_AER.002"
+    "b.e11.BLMTRC5CN.f19_g16.OZONE_AER.003" "b.e11.BLMTRC5CN.f19_g16.OZONE_AER.004"
+    "b.e11.BLMTRC5CN.f19_g16.OZONE_AER.005"
+)
+runs_Control=(
+    "b.e11.B1850C5CN.f19_g16.0850cntl.001"
+)
 
-# Ensemble labels (JSON array).
-export ENSNAMES_JSON='["Full","GHG","LULC","Orbital","Solar","Volcanic","OzoneAer","Control"]'
-
-# Run names per ensemble (JSON array-of-arrays; use "" for empty placeholders).
-export RUNNAMES_JSON='[
-  ["b.e11.BLMTRC5CN.f19_g16.001","b.e11.BLMTRC5CN.f19_g16.002",
-   "b.e11.BLMTRC5CN.f19_g16.003","b.e11.BLMTRC5CN.f19_g16.004",
-   "b.e11.BLMTRC5CN.f19_g16.005","b.e11.BLMTRC5CN.f19_g16.006",
-   "b.e11.BLMTRC5CN.f19_g16.007","b.e11.BLMTRC5CN.f19_g16.008",
-   "b.e11.BLMTRC5CN.f19_g16.009","b.e11.BLMTRC5CN.f19_g16.010",
-   "b.e11.BLMTRC5CN.f19_g16.011","b.e11.BLMTRC5CN.f19_g16.012",
-   "b.e11.BLMTRC5CN.f19_g16.013"],
-  ["b.e11.BLMTRC5CN.f19_g16.GHG.001","b.e11.BLMTRC5CN.f19_g16.GHG.002",
-   "b.e11.BLMTRC5CN.f19_g16.GHG.003","","","","","","","","","",""],
-  ["b.e11.BLMTRC5CN.f19_g16.LULC_HurttPongratz.001",
-   "b.e11.BLMTRC5CN.f19_g16.LULC_HurttPongratz.002",
-   "b.e11.BLMTRC5CN.f19_g16.LULC_HurttPongratz.003",
-   "","","","","","","","","",""],
-  ["b.e11.BLMTRC5CN.f19_g16.ORBITAL.001","b.e11.BLMTRC5CN.f19_g16.ORBITAL.002",
-   "b.e11.BLMTRC5CN.f19_g16.ORBITAL.003","","","","","","","","","",""],
-  ["b.e11.BLMTRC5CN.f19_g16.SSI_VSK_L.001","b.e11.BLMTRC5CN.f19_g16.SSI_VSK_L.003",
-   "b.e11.BLMTRC5CN.f19_g16.SSI_VSK_L.004","b.e11.BLMTRC5CN.f19_g16.SSI_VSK_L.005",
-   "","","","","","","","",""],
-  ["b.e11.BLMTRC5CN.f19_g16.VOLC_GRA.001","b.e11.BLMTRC5CN.f19_g16.VOLC_GRA.002",
-   "b.e11.BLMTRC5CN.f19_g16.VOLC_GRA.003","b.e11.BLMTRC5CN.f19_g16.VOLC_GRA.004",
-   "b.e11.BLMTRC5CN.f19_g16.VOLC_GRA.005","","","","","","","",""],
-  ["b.e11.BLMTRC5CN.f19_g16.OZONE_AER.001","b.e11.BLMTRC5CN.f19_g16.OZONE_AER.002",
-   "b.e11.BLMTRC5CN.f19_g16.OZONE_AER.003","b.e11.BLMTRC5CN.f19_g16.OZONE_AER.004",
-   "b.e11.BLMTRC5CN.f19_g16.OZONE_AER.005","","","","","","","",""],
-  ["b.e11.B1850C5CN.f19_g16.0850cntl.001","","","","","","","","","","","",""]
-]'
-
-# Date range chunks to process (JSON array).
-export DATES_JSON='["085001-089912","090001-099912","100001-109912","110001-119912",
- "120001-129912","130001-139912","140001-149912","150001-159912",
- "160001-169912","170001-179912","180001-184912","185001-200512"]'
+# Date range chunks to process.
+dates=(
+    "085001-089912" "090001-099912" "100001-109912" "110001-119912"
+    "120001-129912" "130001-139912" "140001-149912" "150001-159912"
+    "160001-169912" "170001-179912" "180001-184912" "185001-200512"
+)
 
 # ---------------------------------------------------------------------------
 # Internal script settings
@@ -177,19 +184,29 @@ if ${CHECK_ONLY}; then
 fi
 
 # ---------------------------------------------------------------------------
-# 6. Run the main Python script
+# 6. Loop over ensembles → members → date chunks, invoking Python once each
 # ---------------------------------------------------------------------------
 info "Starting heat budget computation …"
 info "Log file: ${LOG_FILE}"
 
 cd "${SCRIPT_DIR}"
 
-# Tee stdout+stderr to both the terminal and the log file
-python3 "${MAIN_SCRIPT}" 2>&1 | tee "${LOG_FILE}"
-STATUS=${PIPESTATUS[0]}
+for ensname in "${ensnames[@]}"; do
+    runs_var="runs_${ensname}[@]"
+    for runname in "${!runs_var}"; do
+        [[ -z "${runname}" ]] && continue
+        for date in "${dates[@]}"; do
+            info "Ensemble: ${ensname}  |  Run: ${runname}  |  Date: ${date}"
+            export ENSNAME="${ensname}"
+            export RUNNAME="${runname}"
+            export DATE="${date}"
+            python3 "${MAIN_SCRIPT}" 2>&1 | tee -a "${LOG_FILE}"
+            STATUS=${PIPESTATUS[0]}
+            if [[ ${STATUS} -ne 0 ]]; then
+                error "Python exited with status ${STATUS}. See ${LOG_FILE}."
+            fi
+        done
+    done
+done
 
-if [[ ${STATUS} -eq 0 ]]; then
-    info "Computation finished successfully."
-else
-    error "Computation exited with status ${STATUS}. See ${LOG_FILE} for details."
-fi
+info "All computations finished successfully."
