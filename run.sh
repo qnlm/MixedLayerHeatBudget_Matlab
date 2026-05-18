@@ -37,6 +37,9 @@ export REF_COL="150"
 export REGBOX="-10 10 90 300"
 
 # Ensemble loop bounds (0-indexed, Python range convention: [EE_START, EE_END) ).
+# Default processes only ensemble index 5 (Solar), member index 4 – the same
+# single-member subset that matched the original MATLAB script (ee=6, rr=5 in
+# 1-indexed notation).  Set EE_START=0 / EE_END=8 to process all ensembles.
 export EE_START="5"
 export EE_END="6"
 

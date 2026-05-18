@@ -100,10 +100,10 @@ with nc4.Dataset(GRID_FILE) as nc:
 # Identify the row/column indices that fall within the region of interest.
 # REF_COL (0-indexed) is used as the reference row/column for band selection.
 mylat = np.where(
-    (tlat_full[:, REF_COL] >= regbox[0]) & (tlat_full[:, REF_COL] <= regbox[1])
+    (tlat_full[:, REF_COL] >= regbox[0]) & (tlat_full[:, REF_COL] <= regbox[1])  # REF_COL is 0-indexed
 )[0]
 mylon = np.where(
-    (tlon_full[REF_COL, :] >= regbox[2]) & (tlon_full[REF_COL, :] <= regbox[3])
+    (tlon_full[REF_COL, :] >= regbox[2]) & (tlon_full[REF_COL, :] <= regbox[3])  # REF_COL is 0-indexed
 )[0]
 
 tlat = tlat_full[np.ix_(mylat, mylon)]
