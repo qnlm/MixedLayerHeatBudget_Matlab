@@ -25,7 +25,7 @@ Returns (all shape nt x nlat x nlon unless noted):
     vpdSmdy   – v′ × mean-dS/dy
     vmdSpdy   – mean-v × dS′/dy
     vpdSpdy   – v′ × dS′/dy
-    dSpdt     – time-derivative of tracer anomaly
+    dSpdt     – time-derivative of tracer anomaly [units/day]
     mnupdSpdx – monthly-climatological mean of updSpdx
     mnvpdSpdy – monthly-climatological mean of vpdSpdy
 """
@@ -50,23 +50,35 @@ def _pad_idx(n):
     return fwd, bwd
 
 
-def _grad_x(field2d, latarr, lonarr):
-    """Zonal gradient on a sphere, shape (nlat, nlon)."""
-    nlon = field2d.shape[1]
+def _grad_x(field, latarr, lonarr):
+    """
+    Zonal gradient on a sphere.  Works for any leading batch dimensions.
+    field  : (..., nlat, nlon)
+    latarr : (nlat, nlon)  radians
+    lonarr : (nlat, nlon)  radians
+    Returns (..., nlat, nlon).
+    """
+    nlon = field.shape[-1]
     fwd, bwd = _pad_idx(nlon)
 
-    dS = field2d[:, fwd] - field2d[:, bwd]                          # (nlat, nlon+1)
-    dStmp = dS * np.cos(latarr[:, bwd]) / (lonarr[:, fwd] - lonarr[:, bwd])
-    return 0.5 * (dStmp[:, :-1] + dStmp[:, 1:]) / RE               # (nlat, nlon)
+    dS     = field[..., fwd] - field[..., bwd]                        # (..., nlat, nlon+1)
+    dStmp  = dS * np.cos(latarr[..., bwd]) / (lonarr[..., fwd] - lonarr[..., bwd])
+    return 0.5 * (dStmp[..., :-1] + dStmp[..., 1:]) / RE             # (..., nlat, nlon)
 
 
-def _grad_y(field2d, latarr):
-    """Meridional gradient on a sphere, shape (nlat, nlon)."""
-    nlat = field2d.shape[0]
+def _grad_y(field, latarr):
+    """
+    Meridional gradient on a sphere.  Works for any leading batch dimensions.
+    field  : (..., nlat, nlon)
+    latarr : (nlat, nlon)  radians
+    Returns (..., nlat, nlon).
+    """
+    nlat = field.shape[-2]
     fwd, bwd = _pad_idx(nlat)
 
-    dStmp = (field2d[fwd, :] - field2d[bwd, :]) / (latarr[fwd, :] - latarr[bwd, :])
-    return 0.5 * (dStmp[:-1, :] + dStmp[1:, :]) / RE               # (nlat, nlon)
+    dlat   = latarr[fwd, :] - latarr[bwd, :]                         # (nlat+1, nlon)
+    dStmp  = (field[..., fwd, :] - field[..., bwd, :]) / dlat
+    return 0.5 * (dStmp[..., :-1, :] + dStmp[..., 1:, :]) / RE      # (..., nlat, nlon)
 
 
 def advection_ml_rd(salt, uvel, vvel, lat, lon, time, yr, mon, yrclim):
@@ -77,77 +89,51 @@ def advection_ml_rd(salt, uvel, vvel, lat, lon, time, yr, mon, yrclim):
     lonarr = lon * np.pi / 180.0
 
     # ------------------------------------------------------------------
-    # 1. Instantaneous horizontal gradients at every time step
+    # 1. Instantaneous horizontal gradients for all time steps at once
     # ------------------------------------------------------------------
-    dSdx = np.zeros_like(salt)
-    dSdy = np.zeros_like(salt)
-
-    for tt in range(nt):
-        dSdx[tt] = _grad_x(salt[tt], latarr, lonarr)
-        dSdy[tt] = _grad_y(salt[tt], latarr)
+    dSdx = _grad_x(salt, latarr, lonarr)   # (nt, nlat, nlon)
+    dSdy = _grad_y(salt, latarr)            # (nt, nlat, nlon)
 
     # ------------------------------------------------------------------
     # 2. Monthly climatologies over the yrclim window
     # ------------------------------------------------------------------
-    Sm     = np.zeros((12, nlat, nlon))
-    dSmdx  = np.zeros((12, nlat, nlon))
-    dSmdy  = np.zeros((12, nlat, nlon))
-    um     = np.zeros((12, nlat, nlon))
-    vm     = np.zeros((12, nlat, nlon))
+    Sm    = np.zeros((12, nlat, nlon))
+    um    = np.zeros((12, nlat, nlon))
+    vm    = np.zeros((12, nlat, nlon))
 
     for mm in range(1, 13):
         thism = np.where((mon == mm) & (yr >= yrclim[0]) & (yr <= yrclim[1]))[0]
-        Sm[mm - 1]  = np.nanmean(salt[thism],  axis=0)
-        um[mm - 1]  = np.nanmean(uvel[thism],  axis=0)
-        vm[mm - 1]  = np.nanmean(vvel[thism],  axis=0)
+        if thism.size:
+            Sm[mm - 1] = np.nanmean(salt[thism], axis=0)
+            um[mm - 1] = np.nanmean(uvel[thism], axis=0)
+            vm[mm - 1] = np.nanmean(vvel[thism], axis=0)
 
-    for mm in range(1, 13):
-        dSmdx[mm - 1] = _grad_x(Sm[mm - 1], latarr, lonarr)
-        dSmdy[mm - 1] = _grad_y(Sm[mm - 1], latarr)
-
-    # ------------------------------------------------------------------
-    # 3. Mean advection of mean gradient  (size: nt x nlat x nlon)
-    # ------------------------------------------------------------------
-    umdSmdx = np.zeros_like(salt)
-    vmdSmdy = np.zeros_like(salt)
-
-    for mm in range(1, 13):
-        thism = np.where(mon == mm)[0]
-        umdSmdx[thism] = um[mm - 1] * dSmdx[mm - 1]   # broadcast over time
-        vmdSmdy[thism] = vm[mm - 1] * dSmdy[mm - 1]
+    # Gradients of the monthly climatologies
+    dSmdx = _grad_x(Sm, latarr, lonarr)    # (12, nlat, nlon)
+    dSmdy = _grad_y(Sm, latarr)            # (12, nlat, nlon)
 
     # ------------------------------------------------------------------
+    # 3–6. Reynolds-decomposed advection terms
+    #      Use mi = mon-1  for vectorised month-index lookup.
+    #      um[mi] / vm[mi] etc. all broadcast to (nt, nlat, nlon).
+    # ------------------------------------------------------------------
+    mi = mon - 1   # 0-based month indices, shape (nt,)
+
+    # 3. Mean advection of mean gradient
+    umdSmdx = um[mi] * dSmdx[mi]
+    vmdSmdy = vm[mi] * dSmdy[mi]
+
     # 4. Anomalous advection of mean gradient
-    # ------------------------------------------------------------------
-    updSmdx = np.zeros_like(salt)
-    vpdSmdy = np.zeros_like(salt)
+    updSmdx = (uvel - um[mi]) * dSmdx[mi]
+    vpdSmdy = (vvel - vm[mi]) * dSmdy[mi]
 
-    for tt in range(nt):
-        mi = mon[tt] - 1   # 0-based month index
-        updSmdx[tt] = (uvel[tt] - um[mi]) * dSmdx[mi]
-        vpdSmdy[tt] = (vvel[tt] - vm[mi]) * dSmdy[mi]
-
-    # ------------------------------------------------------------------
     # 5. Mean advection of anomalous gradient
-    # ------------------------------------------------------------------
-    umdSpdx = np.zeros_like(salt)
-    vmdSpdy = np.zeros_like(salt)
+    umdSpdx = um[mi] * (dSdx - dSmdx[mi])
+    vmdSpdy = vm[mi] * (dSdy - dSmdy[mi])
 
-    for tt in range(nt):
-        mi = mon[tt] - 1
-        umdSpdx[tt] = um[mi] * (dSdx[tt] - dSmdx[mi])
-        vmdSpdy[tt] = vm[mi] * (dSdy[tt] - dSmdy[mi])
-
-    # ------------------------------------------------------------------
     # 6. Anomalous advection of anomalous gradient
-    # ------------------------------------------------------------------
-    updSpdx = np.zeros_like(salt)
-    vpdSpdy = np.zeros_like(salt)
-
-    for tt in range(nt):
-        mi = mon[tt] - 1
-        updSpdx[tt] = (uvel[tt] - um[mi]) * (dSdx[tt] - dSmdx[mi])
-        vpdSpdy[tt] = (vvel[tt] - vm[mi]) * (dSdy[tt] - dSmdy[mi])
+    updSpdx = (uvel - um[mi]) * (dSdx - dSmdx[mi])
+    vpdSpdy = (vvel - vm[mi]) * (dSdy - dSmdy[mi])
 
     # ------------------------------------------------------------------
     # 7. Monthly-climatological mean of the eddy–eddy cross-terms
@@ -157,22 +143,22 @@ def advection_ml_rd(salt, uvel, vvel, lat, lon, time, yr, mon, yrclim):
 
     for mm in range(1, 13):
         thism = np.where(mon == mm)[0]
-        mnupdSpdx[thism] = np.nanmean(updSpdx[thism], axis=0)
-        mnvpdSpdy[thism] = np.nanmean(vpdSpdy[thism], axis=0)
+        if thism.size:
+            mnupdSpdx[thism] = np.nanmean(updSpdx[thism], axis=0)
+            mnvpdSpdy[thism] = np.nanmean(vpdSpdy[thism], axis=0)
 
     # ------------------------------------------------------------------
     # 8. Time derivative of the tracer anomaly
     # ------------------------------------------------------------------
-    # Convert salt to anomaly in-place (local copy)
-    for tt in range(nt):
-        salt[tt] -= Sm[mon[tt] - 1]
+    # Subtract monthly climatology to get anomaly (vectorised)
+    salt -= Sm[mi]   # salt[tt] -= Sm[mon[tt]-1] for every tt
 
     dSpdt = np.zeros_like(salt)
     if nt > 1:
         fwd_t, bwd_t = _pad_idx(nt)
-        dt = (time[fwd_t] - time[bwd_t])[:, np.newaxis, np.newaxis]   # (nt+1, 1, 1)
-        dStmp = (salt[fwd_t] - salt[bwd_t]) / dt                      # (nt+1, nlat, nlon)
-        dSpdt = 0.5 * (dStmp[:-1] + dStmp[1:])                        # (nt,   nlat, nlon)
+        dt    = (time[fwd_t] - time[bwd_t])[:, np.newaxis, np.newaxis]  # (nt+1,1,1)
+        dStmp = (salt[fwd_t] - salt[bwd_t]) / dt                        # (nt+1, nlat, nlon)
+        dSpdt = 0.5 * (dStmp[:-1] + dStmp[1:])                          # (nt,   nlat, nlon)
 
     return (umdSmdx, updSmdx, umdSpdx, updSpdx,
             vmdSmdy, vpdSmdy, vmdSpdy, vpdSpdy,

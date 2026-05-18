@@ -50,27 +50,26 @@ def vertadv_ml_rd(time, lat, lon, mld, umld, vmld, Tmld, Tsub, wsub, mon, yr, yr
     # 1.  Time derivative of MLD  [m/day]
     # ------------------------------------------------------------------
     fwd_t, bwd_t = _pad_idx(nt)
-    dt = (time[fwd_t] - time[bwd_t])[:, np.newaxis, np.newaxis]   # (nt+1, 1, 1)
-    dHtmp = (mld[fwd_t] - mld[bwd_t]) / dt                        # (nt+1, nlat, nlon)
-    dHdt  = 0.5 * (dHtmp[:-1] + dHtmp[1:])                        # (nt,   nlat, nlon)
+    dt    = (time[fwd_t] - time[bwd_t])[:, np.newaxis, np.newaxis]  # (nt+1, 1, 1)
+    dHtmp = (mld[fwd_t] - mld[bwd_t]) / dt                          # (nt+1, nlat, nlon)
+    dHdt  = 0.5 * (dHtmp[:-1] + dHtmp[1:])                          # (nt,   nlat, nlon)
 
     # ------------------------------------------------------------------
     # 2.  Horizontal derivatives of MLD (dimensionless: m/m)
+    #     Vectorised over the time dimension.
     # ------------------------------------------------------------------
-    dHdx = np.zeros_like(mld)
-    dHdy = np.zeros_like(mld)
-
     fwd_lon, bwd_lon = _pad_idx(nlon)
     fwd_lat, bwd_lat = _pad_idx(nlat)
 
-    for tt in range(nt):
-        mld_tt = mld[tt]                                            # (nlat, nlon)
-        dH = mld_tt[:, fwd_lon] - mld_tt[:, bwd_lon]               # (nlat, nlon+1)
-        dHtmp2 = dH * np.cos(latarr[:, bwd_lon]) / (lonarr[:, fwd_lon] - lonarr[:, bwd_lon])
-        dHdx[tt] = 0.5 * (dHtmp2[:, :-1] + dHtmp2[:, 1:]) / RE
+    # zonal gradient: (nt, nlat, nlon)
+    dH_x   = mld[:, :, fwd_lon] - mld[:, :, bwd_lon]                # (nt, nlat, nlon+1)
+    dHtmp2 = dH_x * np.cos(latarr[:, bwd_lon]) / (lonarr[:, fwd_lon] - lonarr[:, bwd_lon])
+    dHdx   = 0.5 * (dHtmp2[:, :, :-1] + dHtmp2[:, :, 1:]) / RE     # (nt, nlat, nlon)
 
-        dHtmp2 = (mld_tt[fwd_lat, :] - mld_tt[bwd_lat, :]) / (latarr[fwd_lat, :] - latarr[bwd_lat, :])
-        dHdy[tt] = 0.5 * (dHtmp2[:-1, :] + dHtmp2[1:, :]) / RE
+    # meridional gradient: (nt, nlat, nlon)
+    dlat   = latarr[fwd_lat, :] - latarr[bwd_lat, :]                 # (nlat+1, nlon)
+    dHtmp2 = (mld[:, fwd_lat, :] - mld[:, bwd_lat, :]) / dlat       # (nt, nlat+1, nlon)
+    dHdy   = 0.5 * (dHtmp2[:, :-1, :] + dHtmp2[:, 1:, :]) / RE     # (nt, nlat, nlon)
 
     # ------------------------------------------------------------------
     # 3.  Entrainment velocity  [m/s]
@@ -79,12 +78,7 @@ def vertadv_ml_rd(time, lat, lon, mld, umld, vmld, Tmld, Tsub, wsub, mon, yr, yr
     w_entr = dHdt / 86400.0 + umld * dHdx + vmld * dHdy + wsub
 
     # ------------------------------------------------------------------
-    # 4.  Cross-MLD temperature difference normalised by MLD depth
-    # ------------------------------------------------------------------
-    dTdz = (Tmld - Tsub) / mld    # [°C / m]
-
-    # ------------------------------------------------------------------
-    # 5.  Monthly climatologies over the yrclim window
+    # 4.  Monthly climatologies over the yrclim window
     # ------------------------------------------------------------------
     Tm_mld = np.zeros((12, nlat, nlon))
     Tm_sub = np.zeros((12, nlat, nlon))
@@ -92,50 +86,45 @@ def vertadv_ml_rd(time, lat, lon, mld, umld, vmld, Tmld, Tsub, wsub, mon, yr, yr
 
     for mm in range(1, 13):
         thism = np.where((mon == mm) & (yr >= yrclim[0]) & (yr <= yrclim[1]))[0]
-        Tm_mld[mm - 1] = np.nanmean(Tmld[thism],   axis=0)
-        Tm_sub[mm - 1] = np.nanmean(Tsub[thism],   axis=0)
-        wm[mm - 1]     = np.nanmean(w_entr[thism], axis=0)
+        if thism.size:
+            Tm_mld[mm - 1] = np.nanmean(Tmld[thism],   axis=0)
+            Tm_sub[mm - 1] = np.nanmean(Tsub[thism],   axis=0)
+            wm[mm - 1]     = np.nanmean(w_entr[thism], axis=0)
 
-    # Heaviside step function on climatological mean entrainment:
-    # only entrain (positive w_entr means upward motion into the layer)
+    # Heaviside: only entrain when climatological w_entr > 0
     wsgn = np.where(wm > 0, 1.0, 0.0)   # (12, nlat, nlon)
-
-    # Climatological mean temperature difference (no depth normalisation yet;
-    # the normalisation by MLD is done per time step below)
-    dTm = Tm_mld - Tm_sub   # (12, nlat, nlon)
+    dTm  = Tm_mld - Tm_sub               # (12, nlat, nlon)
 
     # ------------------------------------------------------------------
-    # 6.  Reynolds-decomposed vertical advection terms
+    # 5.  Reynolds-decomposed vertical advection terms (vectorised)
+    #     mi = mon-1 maps each time step to its 0-based month index,
+    #     so wsgn[mi] etc. broadcast to (nt, nlat, nlon).
     # ------------------------------------------------------------------
-    wmdTmdz = np.zeros_like(Tmld)
-    wpdTmdz = np.zeros_like(Tmld)
-    wmdTpdz = np.zeros_like(Tmld)
-    wpdTpdz = np.zeros_like(Tmld)
+    mi   = mon - 1                       # (nt,)
 
-    for tt in range(nt):
-        mi = mon[tt] - 1   # 0-based month index
+    wp   = w_entr - wm[mi]              # anomalous entrainment velocity
+    tmp1 = Tmld   - Tm_mld[mi]          # anomalous MLD temperature
+    tmp2 = Tsub   - Tm_sub[mi]          # anomalous sub-MLD temperature
 
-        # Mean entrainment of mean gradient
-        wmdTmdz[tt] = wsgn[mi] * wm[mi] * dTm[mi] / mld[tt]
+    # Mean entrainment of mean gradient
+    wmdTmdz = wsgn[mi] * wm[mi] * dTm[mi] / mld
 
-        # Anomalous entrainment of mean gradient
-        wp = w_entr[tt] - wm[mi]
-        wpdTmdz[tt] = wsgn[mi] * wp * (Tm_mld[mi] - Tm_sub[mi]) / mld[tt]
+    # Anomalous entrainment of mean gradient
+    wpdTmdz = wsgn[mi] * wp * (Tm_mld[mi] - Tm_sub[mi]) / mld
 
-        # Mean entrainment of anomalous gradient
-        tmp1 = Tmld[tt] - Tm_mld[mi]
-        tmp2 = Tsub[tt] - Tm_sub[mi]
-        wmdTpdz[tt] = wsgn[mi] * wm[mi] * (tmp1 - tmp2) / mld[tt]
+    # Mean entrainment of anomalous gradient
+    wmdTpdz = wsgn[mi] * wm[mi] * (tmp1 - tmp2) / mld
 
-        # Anomalous entrainment of anomalous gradient
-        wpdTpdz[tt] = wsgn[mi] * wp * (tmp1 - tmp2) / mld[tt]
+    # Anomalous entrainment of anomalous gradient
+    wpdTpdz = wsgn[mi] * wp * (tmp1 - tmp2) / mld
 
     # ------------------------------------------------------------------
-    # 7.  Monthly climatology of the eddy–eddy term
+    # 6.  Monthly climatology of the eddy–eddy term
     # ------------------------------------------------------------------
     mnwpdTpdz = np.zeros((12, nlat, nlon))
     for mm in range(1, 13):
         thism = np.where((mon == mm) & (yr >= yrclim[0]) & (yr <= yrclim[1]))[0]
-        mnwpdTpdz[mm - 1] = np.nanmean(wpdTpdz[thism], axis=0)
+        if thism.size:
+            mnwpdTpdz[mm - 1] = np.nanmean(wpdTpdz[thism], axis=0)
 
     return w_entr, wmdTmdz, wpdTmdz, wmdTpdz, wpdTpdz, mnwpdTpdz
