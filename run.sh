@@ -7,23 +7,97 @@
 #   ./run.sh --check-only # Only verify the environment, do not run
 #   ./run.sh --help       # Show this help
 #
-# The script:
-#   1. Checks for required Python 3 interpreter
-#   2. Installs missing Python packages (numpy, netCDF4, cftime, scipy)
-#   3. Creates the output directory if it does not exist
-#   4. Executes heat_budget_rd_lme.py and logs stdout/stderr
+# All configuration is declared in this file.  The Python script
+# heat_budget_rd_lme.py processes exactly one run/date combination per
+# invocation; this script loops over all ensembles, members, and date
+# chunks and calls Python once per combination.
 # =============================================================================
 
 set -euo pipefail
 
 # ---------------------------------------------------------------------------
-# Configuration
+# Configuration – edit this section to change paths, regions, or run lists
+# ---------------------------------------------------------------------------
+
+# Base directory containing per-variable time-series NetCDF files.
+export BASE_PATH="/glade/p/cesm0005/CESM-CAM5-LME/ocn/proc/tseries/monthly"
+
+# Directory where output .mat files will be written.
+export OUT_DIR="/glade/p/cesm/palwg_dev/LME/proc/samantha/LME_heatbudget"
+
+# NetCDF file used to read the grid (TLAT / TLONG).
+export GRID_FILE="/glade/scratch/samantha/b40.1850.track1.1deg.006/b40.1850.track1.1deg.006.pop.h.HMXL.080001-089912.nc"
+
+# Number of vertical levels to read from each 3-D variable.
+export NZ="20"
+
+# 1-indexed reference column used to select the lat/lon bands (MATLAB convention).
+export REF_COL="150"
+
+# Region of interest: "lat_min lat_max lon_min lon_max".
+export REGBOX="-10 10 90 300"
+
+# ---------------------------------------------------------------------------
+# Ensemble / run name definitions
+# Each ensemble has a matching runs_<EnsName> array.  Use "" as a placeholder
+# for missing members so the index layout is preserved.
+# ---------------------------------------------------------------------------
+ensnames=("Full" "GHG" "LULC" "Orbital" "Solar" "Volcanic" "OzoneAer" "Control")
+
+runs_Full=(
+    "b.e11.BLMTRC5CN.f19_g16.001" "b.e11.BLMTRC5CN.f19_g16.002"
+    "b.e11.BLMTRC5CN.f19_g16.003" "b.e11.BLMTRC5CN.f19_g16.004"
+    "b.e11.BLMTRC5CN.f19_g16.005" "b.e11.BLMTRC5CN.f19_g16.006"
+    "b.e11.BLMTRC5CN.f19_g16.007" "b.e11.BLMTRC5CN.f19_g16.008"
+    "b.e11.BLMTRC5CN.f19_g16.009" "b.e11.BLMTRC5CN.f19_g16.010"
+    "b.e11.BLMTRC5CN.f19_g16.011" "b.e11.BLMTRC5CN.f19_g16.012"
+    "b.e11.BLMTRC5CN.f19_g16.013"
+)
+runs_GHG=(
+    "b.e11.BLMTRC5CN.f19_g16.GHG.001" "b.e11.BLMTRC5CN.f19_g16.GHG.002"
+    "b.e11.BLMTRC5CN.f19_g16.GHG.003"
+)
+runs_LULC=(
+    "b.e11.BLMTRC5CN.f19_g16.LULC_HurttPongratz.001"
+    "b.e11.BLMTRC5CN.f19_g16.LULC_HurttPongratz.002"
+    "b.e11.BLMTRC5CN.f19_g16.LULC_HurttPongratz.003"
+)
+runs_Orbital=(
+    "b.e11.BLMTRC5CN.f19_g16.ORBITAL.001" "b.e11.BLMTRC5CN.f19_g16.ORBITAL.002"
+    "b.e11.BLMTRC5CN.f19_g16.ORBITAL.003"
+)
+runs_Solar=(
+    "b.e11.BLMTRC5CN.f19_g16.SSI_VSK_L.001" "b.e11.BLMTRC5CN.f19_g16.SSI_VSK_L.003"
+    "b.e11.BLMTRC5CN.f19_g16.SSI_VSK_L.004" "b.e11.BLMTRC5CN.f19_g16.SSI_VSK_L.005"
+)
+runs_Volcanic=(
+    "b.e11.BLMTRC5CN.f19_g16.VOLC_GRA.001" "b.e11.BLMTRC5CN.f19_g16.VOLC_GRA.002"
+    "b.e11.BLMTRC5CN.f19_g16.VOLC_GRA.003" "b.e11.BLMTRC5CN.f19_g16.VOLC_GRA.004"
+    "b.e11.BLMTRC5CN.f19_g16.VOLC_GRA.005"
+)
+runs_OzoneAer=(
+    "b.e11.BLMTRC5CN.f19_g16.OZONE_AER.001" "b.e11.BLMTRC5CN.f19_g16.OZONE_AER.002"
+    "b.e11.BLMTRC5CN.f19_g16.OZONE_AER.003" "b.e11.BLMTRC5CN.f19_g16.OZONE_AER.004"
+    "b.e11.BLMTRC5CN.f19_g16.OZONE_AER.005"
+)
+runs_Control=(
+    "b.e11.B1850C5CN.f19_g16.0850cntl.001"
+)
+
+# Date range chunks to process.
+dates=(
+    "085001-089912" "090001-099912" "100001-109912" "110001-119912"
+    "120001-129912" "130001-139912" "140001-149912" "150001-159912"
+    "160001-169912" "170001-179912" "180001-184912" "185001-200512"
+)
+
+# ---------------------------------------------------------------------------
+# Internal script settings
 # ---------------------------------------------------------------------------
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MAIN_SCRIPT="${SCRIPT_DIR}/heat_budget_rd_lme.py"
 LOG_DIR="${SCRIPT_DIR}/logs"
 LOG_FILE="${LOG_DIR}/heat_budget_$(date +%Y%m%d_%H%M%S).log"
-OUT_DIR="${HEAT_BUDGET_OUT_DIR:-/glade/p/cesm/palwg_dev/LME/proc/samantha/LME_heatbudget}"
 REQUIRED_PKGS=(numpy netCDF4 cftime scipy)
 
 # ---------------------------------------------------------------------------
@@ -110,19 +184,33 @@ if ${CHECK_ONLY}; then
 fi
 
 # ---------------------------------------------------------------------------
-# 6. Run the main Python script
+# 6. Loop over ensembles → members → date chunks, invoking Python once each
 # ---------------------------------------------------------------------------
 info "Starting heat budget computation …"
 info "Log file: ${LOG_FILE}"
 
 cd "${SCRIPT_DIR}"
 
-# Tee stdout+stderr to both the terminal and the log file
-python3 "${MAIN_SCRIPT}" 2>&1 | tee "${LOG_FILE}"
-STATUS=${PIPESTATUS[0]}
+# Redirect all subsequent stdout+stderr to both terminal and the log file.
+# This opens the log once rather than on every Python invocation.
+exec > >(tee -a "${LOG_FILE}") 2>&1
 
-if [[ ${STATUS} -eq 0 ]]; then
-    info "Computation finished successfully."
-else
-    error "Computation exited with status ${STATUS}. See ${LOG_FILE} for details."
-fi
+for ensname in "${ensnames[@]}"; do
+    runs_var="runs_${ensname}[@]"
+    for runname in "${!runs_var}"; do
+        [[ -z "${runname}" ]] && continue
+        for date in "${dates[@]}"; do
+            info "Ensemble: ${ensname}  |  Run: ${runname}  |  Date: ${date}"
+            export ENSNAME="${ensname}"
+            export RUNNAME="${runname}"
+            export DATE="${date}"
+            python3 "${MAIN_SCRIPT}"
+            STATUS=$?
+            if [[ ${STATUS} -ne 0 ]]; then
+                error "Python exited with status ${STATUS}. See ${LOG_FILE}."
+            fi
+        done
+    done
+done
+
+info "All computations finished successfully."
