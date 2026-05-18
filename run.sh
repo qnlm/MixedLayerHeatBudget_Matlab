@@ -7,23 +7,87 @@
 #   ./run.sh --check-only # Only verify the environment, do not run
 #   ./run.sh --help       # Show this help
 #
-# The script:
-#   1. Checks for required Python 3 interpreter
-#   2. Installs missing Python packages (numpy, netCDF4, cftime, scipy)
-#   3. Creates the output directory if it does not exist
-#   4. Executes heat_budget_rd_lme.py and logs stdout/stderr
+# All configuration for heat_budget_rd_lme.py is declared here as exported
+# environment variables.  Edit this file to change paths, regions, ensembles,
+# run names, or date ranges – the Python script itself requires no edits.
 # =============================================================================
 
 set -euo pipefail
 
 # ---------------------------------------------------------------------------
-# Configuration
+# Configuration – all values forwarded to heat_budget_rd_lme.py
+# ---------------------------------------------------------------------------
+
+# Base directory containing per-variable time-series NetCDF files.
+export BASE_PATH="/glade/p/cesm0005/CESM-CAM5-LME/ocn/proc/tseries/monthly"
+
+# Directory where output .mat files will be written.
+export OUT_DIR="/glade/p/cesm/palwg_dev/LME/proc/samantha/LME_heatbudget"
+
+# NetCDF file used to read the grid (TLAT / TLONG).
+export GRID_FILE="/glade/scratch/samantha/b40.1850.track1.1deg.006/b40.1850.track1.1deg.006.pop.h.HMXL.080001-089912.nc"
+
+# Number of vertical levels to read from each 3-D variable.
+export NZ="20"
+
+# 1-indexed reference column used to select the lat/lon bands (MATLAB convention).
+export REF_COL="150"
+
+# Region of interest: "lat_min lat_max lon_min lon_max".
+export REGBOX="-10 10 90 300"
+
+# Ensemble loop bounds (0-indexed, Python range convention: [EE_START, EE_END) ).
+export EE_START="5"
+export EE_END="6"
+
+# Member loop bounds (0-indexed, Python range convention: [RR_START, RR_END) ).
+export RR_START="4"
+export RR_END="5"
+
+# Ensemble labels (JSON array).
+export ENSNAMES_JSON='["Full","GHG","LULC","Orbital","Solar","Volcanic","OzoneAer","Control"]'
+
+# Run names per ensemble (JSON array-of-arrays; use "" for empty placeholders).
+export RUNNAMES_JSON='[
+  ["b.e11.BLMTRC5CN.f19_g16.001","b.e11.BLMTRC5CN.f19_g16.002",
+   "b.e11.BLMTRC5CN.f19_g16.003","b.e11.BLMTRC5CN.f19_g16.004",
+   "b.e11.BLMTRC5CN.f19_g16.005","b.e11.BLMTRC5CN.f19_g16.006",
+   "b.e11.BLMTRC5CN.f19_g16.007","b.e11.BLMTRC5CN.f19_g16.008",
+   "b.e11.BLMTRC5CN.f19_g16.009","b.e11.BLMTRC5CN.f19_g16.010",
+   "b.e11.BLMTRC5CN.f19_g16.011","b.e11.BLMTRC5CN.f19_g16.012",
+   "b.e11.BLMTRC5CN.f19_g16.013"],
+  ["b.e11.BLMTRC5CN.f19_g16.GHG.001","b.e11.BLMTRC5CN.f19_g16.GHG.002",
+   "b.e11.BLMTRC5CN.f19_g16.GHG.003","","","","","","","","","",""],
+  ["b.e11.BLMTRC5CN.f19_g16.LULC_HurttPongratz.001",
+   "b.e11.BLMTRC5CN.f19_g16.LULC_HurttPongratz.002",
+   "b.e11.BLMTRC5CN.f19_g16.LULC_HurttPongratz.003",
+   "","","","","","","","","",""],
+  ["b.e11.BLMTRC5CN.f19_g16.ORBITAL.001","b.e11.BLMTRC5CN.f19_g16.ORBITAL.002",
+   "b.e11.BLMTRC5CN.f19_g16.ORBITAL.003","","","","","","","","","",""],
+  ["b.e11.BLMTRC5CN.f19_g16.SSI_VSK_L.001","b.e11.BLMTRC5CN.f19_g16.SSI_VSK_L.003",
+   "b.e11.BLMTRC5CN.f19_g16.SSI_VSK_L.004","b.e11.BLMTRC5CN.f19_g16.SSI_VSK_L.005",
+   "","","","","","","","",""],
+  ["b.e11.BLMTRC5CN.f19_g16.VOLC_GRA.001","b.e11.BLMTRC5CN.f19_g16.VOLC_GRA.002",
+   "b.e11.BLMTRC5CN.f19_g16.VOLC_GRA.003","b.e11.BLMTRC5CN.f19_g16.VOLC_GRA.004",
+   "b.e11.BLMTRC5CN.f19_g16.VOLC_GRA.005","","","","","","","",""],
+  ["b.e11.BLMTRC5CN.f19_g16.OZONE_AER.001","b.e11.BLMTRC5CN.f19_g16.OZONE_AER.002",
+   "b.e11.BLMTRC5CN.f19_g16.OZONE_AER.003","b.e11.BLMTRC5CN.f19_g16.OZONE_AER.004",
+   "b.e11.BLMTRC5CN.f19_g16.OZONE_AER.005","","","","","","","",""],
+  ["b.e11.B1850C5CN.f19_g16.0850cntl.001","","","","","","","","","","","",""]
+]'
+
+# Date range chunks to process (JSON array).
+export DATES_JSON='["085001-089912","090001-099912","100001-109912","110001-119912",
+ "120001-129912","130001-139912","140001-149912","150001-159912",
+ "160001-169912","170001-179912","180001-184912","185001-200512"]'
+
+# ---------------------------------------------------------------------------
+# Internal script settings
 # ---------------------------------------------------------------------------
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MAIN_SCRIPT="${SCRIPT_DIR}/heat_budget_rd_lme.py"
 LOG_DIR="${SCRIPT_DIR}/logs"
 LOG_FILE="${LOG_DIR}/heat_budget_$(date +%Y%m%d_%H%M%S).log"
-OUT_DIR="${HEAT_BUDGET_OUT_DIR:-/glade/p/cesm/palwg_dev/LME/proc/samantha/LME_heatbudget}"
 REQUIRED_PKGS=(numpy netCDF4 cftime scipy)
 
 # ---------------------------------------------------------------------------

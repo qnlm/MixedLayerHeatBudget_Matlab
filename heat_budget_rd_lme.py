@@ -8,6 +8,7 @@ Original: March 2015 / Sam Stevenson
 Uses the formulation of Graham et al.: Climate Dynamics (2014) 43:2399-2414.
 """
 
+import json
 import os
 import numpy as np
 import numpy.ma as ma
@@ -27,64 +28,33 @@ rho = 1025.0   # Mean density of seawater at 20 °C, 35 psu  [kg/m³]
 cp  = 3993.0   # Specific heat of seawater at 20 °C, 35 psu [J/kg/K]
 
 # ---------------------------------------------------------------------------
-# Region of interest  [lat_min, lat_max, lon_min, lon_max]
+# Configuration – all values read from environment variables.
+# Set these in the calling shell (e.g. run.sh) before invoking this script.
 # ---------------------------------------------------------------------------
-regbox = [-10, 10, 90, 300]
+BASE_PATH = os.environ['BASE_PATH']
+OUT_DIR   = os.environ['OUT_DIR']
+GRID_FILE = os.environ['GRID_FILE']
 
-# ---------------------------------------------------------------------------
-# Ensemble / run names
-# ---------------------------------------------------------------------------
-ensnames = ['Full', 'GHG', 'LULC', 'Orbital', 'Solar', 'Volcanic', 'OzoneAer', 'Control']
+# Number of vertical levels to read
+NZ = int(os.environ['NZ'])
 
-runnames = [
-    # Full forcing (13 members)
-    ['b.e11.BLMTRC5CN.f19_g16.001', 'b.e11.BLMTRC5CN.f19_g16.002',
-     'b.e11.BLMTRC5CN.f19_g16.003', 'b.e11.BLMTRC5CN.f19_g16.004',
-     'b.e11.BLMTRC5CN.f19_g16.005', 'b.e11.BLMTRC5CN.f19_g16.006',
-     'b.e11.BLMTRC5CN.f19_g16.007', 'b.e11.BLMTRC5CN.f19_g16.008',
-     'b.e11.BLMTRC5CN.f19_g16.009', 'b.e11.BLMTRC5CN.f19_g16.010',
-     'b.e11.BLMTRC5CN.f19_g16.011', 'b.e11.BLMTRC5CN.f19_g16.012',
-     'b.e11.BLMTRC5CN.f19_g16.013'],
-    # GHG (3 members + empty placeholders)
-    ['b.e11.BLMTRC5CN.f19_g16.GHG.001', 'b.e11.BLMTRC5CN.f19_g16.GHG.002',
-     'b.e11.BLMTRC5CN.f19_g16.GHG.003', '', '', '', '', '', '', '', '', '', ''],
-    # LULC
-    ['b.e11.BLMTRC5CN.f19_g16.LULC_HurttPongratz.001',
-     'b.e11.BLMTRC5CN.f19_g16.LULC_HurttPongratz.002',
-     'b.e11.BLMTRC5CN.f19_g16.LULC_HurttPongratz.003',
-     '', '', '', '', '', '', '', '', '', ''],
-    # Orbital
-    ['b.e11.BLMTRC5CN.f19_g16.ORBITAL.001', 'b.e11.BLMTRC5CN.f19_g16.ORBITAL.002',
-     'b.e11.BLMTRC5CN.f19_g16.ORBITAL.003', '', '', '', '', '', '', '', '', '', ''],
-    # Solar (4 members + empty placeholders)
-    ['b.e11.BLMTRC5CN.f19_g16.SSI_VSK_L.001', 'b.e11.BLMTRC5CN.f19_g16.SSI_VSK_L.003',
-     'b.e11.BLMTRC5CN.f19_g16.SSI_VSK_L.004', 'b.e11.BLMTRC5CN.f19_g16.SSI_VSK_L.005',
-     '', '', '', '', '', '', '', '', ''],
-    # Volcanic (5 members + empty)
-    ['b.e11.BLMTRC5CN.f19_g16.VOLC_GRA.001', 'b.e11.BLMTRC5CN.f19_g16.VOLC_GRA.002',
-     'b.e11.BLMTRC5CN.f19_g16.VOLC_GRA.003', 'b.e11.BLMTRC5CN.f19_g16.VOLC_GRA.004',
-     'b.e11.BLMTRC5CN.f19_g16.VOLC_GRA.005', '', '', '', '', '', '', '', ''],
-    # OzoneAer (5 members + empty)
-    ['b.e11.BLMTRC5CN.f19_g16.OZONE_AER.001', 'b.e11.BLMTRC5CN.f19_g16.OZONE_AER.002',
-     'b.e11.BLMTRC5CN.f19_g16.OZONE_AER.003', 'b.e11.BLMTRC5CN.f19_g16.OZONE_AER.004',
-     'b.e11.BLMTRC5CN.f19_g16.OZONE_AER.005', '', '', '', '', '', '', '', ''],
-    # Control (1 member + empty)
-    ['b.e11.B1850C5CN.f19_g16.0850cntl.001', '', '', '', '', '', '', '', '', '', '', '', ''],
-]
+# REF_COL: 1-indexed reference column for lat/lon band selection (MATLAB
+# convention); converted to 0-indexed here.
+REF_COL = int(os.environ['REF_COL']) - 1
 
-dates = [
-    '085001-089912', '090001-099912', '100001-109912', '110001-119912',
-    '120001-129912', '130001-139912', '140001-149912', '150001-159912',
-    '160001-169912', '170001-179912', '180001-184912', '185001-200512',
-]
+# Region of interest: [lat_min, lat_max, lon_min, lon_max]
+regbox = [float(x) for x in os.environ['REGBOX'].split()]
 
-# ---------------------------------------------------------------------------
-# Base data paths
-# ---------------------------------------------------------------------------
-BASE_PATH = '/glade/p/cesm0005/CESM-CAM5-LME/ocn/proc/tseries/monthly'
-OUT_DIR   = '/glade/p/cesm/palwg_dev/LME/proc/samantha/LME_heatbudget'
-GRID_FILE = ('/glade/scratch/samantha/b40.1850.track1.1deg.006/'
-             'b40.1850.track1.1deg.006.pop.h.HMXL.080001-089912.nc')
+# Loop bounds (0-indexed, exclusive upper bound – Python range convention)
+EE_START = int(os.environ['EE_START'])
+EE_END   = int(os.environ['EE_END'])
+RR_START = int(os.environ['RR_START'])
+RR_END   = int(os.environ['RR_END'])
+
+# Ensemble / run / date configuration (JSON strings)
+ensnames = json.loads(os.environ['ENSNAMES_JSON'])
+runnames = json.loads(os.environ['RUNNAMES_JSON'])
+dates    = json.loads(os.environ['DATES_JSON'])
 
 
 # ---------------------------------------------------------------------------
@@ -128,13 +98,12 @@ with nc4.Dataset(GRID_FILE) as nc:
     tlon_full = _read_var(nc, 'TLONG')  # (nlat, nlon)
 
 # Identify the row/column indices that fall within the region of interest.
-# The MATLAB code uses row 150 (1-indexed) = index 149 (0-indexed) as a
-# reference column/row for selecting the lat/lon bands.
+# REF_COL (0-indexed) is used as the reference row/column for band selection.
 mylat = np.where(
-    (tlat_full[:, 149] >= regbox[0]) & (tlat_full[:, 149] <= regbox[1])
+    (tlat_full[:, REF_COL] >= regbox[0]) & (tlat_full[:, REF_COL] <= regbox[1])
 )[0]
 mylon = np.where(
-    (tlon_full[149, :] >= regbox[2]) & (tlon_full[149, :] <= regbox[3])
+    (tlon_full[REF_COL, :] >= regbox[2]) & (tlon_full[REF_COL, :] <= regbox[3])
 )[0]
 
 tlat = tlat_full[np.ix_(mylat, mylon)]
@@ -143,10 +112,8 @@ tlon = tlon_full[np.ix_(mylat, mylon)]
 # ---------------------------------------------------------------------------
 # Main loop: ensembles → members → date chunks
 # ---------------------------------------------------------------------------
-# Matching the MATLAB loop bounds  for ee=6:6 / for rr=5:5  (1-indexed)
-#   → ee=5 / rr=4  (0-indexed)
-for ee in range(5, 6):
-    for rr in range(4, 5):
+for ee in range(EE_START, EE_END):
+    for rr in range(RR_START, RR_END):
         runname = runnames[ee][rr]
         print(f"\n=== Ensemble: {ensnames[ee]}  |  Run: {runname} ===")
         if not runname:
@@ -158,25 +125,25 @@ for ee in range(5, 6):
             # ---- Temperature -----------------------------------------------
             fname = f'{BASE_PATH}/TEMP/{runname}.pop.h.TEMP.{date}.nc'
             with nc4.Dataset(fname) as nc:
-                temp = _read_var(nc, 'TEMP', slice(None), slice(0, 20),
+                temp = _read_var(nc, 'TEMP', slice(None), slice(0, NZ),
                                  mylat, slice(None))[:, :, :, mylon]
-                z         = np.asarray(nc.variables['z_t'][:20], dtype=np.float64) / 100.0  # cm→m
+                z         = np.asarray(nc.variables['z_t'][:NZ], dtype=np.float64) / 100.0  # cm→m
                 time_vals, yr, mon = _decode_time(nc)
 
             # ---- Velocities ------------------------------------------------
             fname = f'{BASE_PATH}/UVEL/{runname}.pop.h.UVEL.{date}.nc'
             with nc4.Dataset(fname) as nc:
-                uvel = _read_var(nc, 'UVEL', slice(None), slice(0, 20),
+                uvel = _read_var(nc, 'UVEL', slice(None), slice(0, NZ),
                                  mylat, slice(None))[:, :, :, mylon] / 100.0  # cm/s→m/s
 
             fname = f'{BASE_PATH}/VVEL/{runname}.pop.h.VVEL.{date}.nc'
             with nc4.Dataset(fname) as nc:
-                vvel = _read_var(nc, 'VVEL', slice(None), slice(0, 20),
+                vvel = _read_var(nc, 'VVEL', slice(None), slice(0, NZ),
                                  mylat, slice(None))[:, :, :, mylon] / 100.0
 
             fname = f'{BASE_PATH}/WVEL/{runname}.pop.h.WVEL.{date}.nc'
             with nc4.Dataset(fname) as nc:
-                wvel = _read_var(nc, 'WVEL', slice(None), slice(0, 20),
+                wvel = _read_var(nc, 'WVEL', slice(None), slice(0, NZ),
                                  mylat, slice(None))[:, :, :, mylon] / 100.0
 
             # ---- Heat fluxes -----------------------------------------------
