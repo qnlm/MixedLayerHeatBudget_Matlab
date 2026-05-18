@@ -218,8 +218,10 @@ for ee=1:length(ensnames)
             nc_name = sprintf('%s_heatbudget_ml_rd_%s_varyMLD.nc', runname, date_str);
             nc_path = fullfile(out_dir, nc_name);
 
-            out_data = struct('time', time, 'tlat', tlat, 'tlon', tlon, 'mld', mld, ...
-                              'sfcflx', sfcflx, 'Tmld', Tmld, 'dTdt', dTdt, ...
+            out_data = struct('time', time, 'tlat', tlat, 'tlon', tlon, ...
+                              'mld', mld, 'Tmld', Tmld, 'Tsub', Tsub, ...
+                              'umld', umld, 'usub', usub, 'vsub', vsub, 'wsub', wsub, ...
+                              'sfcflx', sfcflx, 'qpen', qpen, 'dTdt', dTdt, ...
                               'umdTmdx', umdTmdx, 'updTmdx', updTmdx, 'umdTpdx', umdTpdx, 'updTpdx', updTpdx, ...
                               'vmdTmdy', vmdTmdy, 'vpdTmdy', vpdTmdy, 'vmdTpdy', vmdTpdy, 'vpdTpdy', vpdTpdy, ...
                               'w_entr', w_entr, 'wmdTmdz', wmdTmdz, 'wpdTmdz', wpdTmdz, 'wmdTpdz', wmdTpdz, 'wpdTpdz', wpdTpdz, ...
@@ -247,16 +249,15 @@ function [yr, mon] = get_noleap_date(time_days)
     t_shift = time_days - 29; 
     
     % 每年固定 365 天
-    yr = floor(t_shift / 365);
+    yr  = floor(t_shift / 365);
     doy = mod(t_shift, 365); 
     
     % noleap 日历下每个月开始对应的天数 (Day of Year)
     month_bounds = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334];
     
-    mon = zeros(size(doy));
-    for m = 1:12
-        mon(doy >= month_bounds(m)) = m;
-    end
+    % 向量化: 统计每个时间步有多少月起始天 ≤ doy，即月份编号
+    mon = sum(bsxfun(@le, reshape(month_bounds, 1, []), doy(:)), 2);
+    mon = reshape(mon, size(doy));
 end
 
 
@@ -288,14 +289,12 @@ function [yr, mon, day] = datenumnoleap(time_days, ref_date)
     % 提取当年内天数 Day of Year (范围：0~364)
     doy = mod(abs_days, 365); 
     
-    % 计算所属月份和日期
-    mon = zeros(size(doy));
-    day = zeros(size(doy));
-    for m = 1:12
-        idx = (doy >= month_bounds(m));
-        mon(idx) = m;
-        day(idx) = doy(idx) - month_bounds(m) + 1;
-    end
+    % 向量化: 统计每个时间步有多少月起始天 ≤ doy，即月份编号
+    mon_flat = sum(bsxfun(@le, reshape(month_bounds, 1, []), doy(:)), 2);
+    mon = reshape(mon_flat, size(doy));
+
+    % 计算日期
+    day = doy - month_bounds(mon) + 1;
 end
 
 

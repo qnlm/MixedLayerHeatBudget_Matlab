@@ -2,6 +2,8 @@
 % layer depth taken from an input field
 % March 2015
 % Sam Stevenson
+% May 2026, Z. Liu: vectorised – replaced triple nested loop with
+%   broadcasting and a cumsum-based pick of the first/last sub-MLD level.
 
 % Inputs:
 % mld   -   matrix containing mixed-layer depth field, dimensions
@@ -19,17 +21,33 @@
 % fldint -  matrix containing the values of the input field averaged over
 %           the mixed layer, dimensions nt x nlat x nlon
 
-function [fldint]=submld_varytime(mld,field,time,z,type)
-    fldint=zeros(size(field,1),size(field,3),size(field,4));
+function [fldint] = submld_varytime(mld, field, time, z, type)
 
-    for tt=1:size(field,1)
-        for la=1:size(field,3)
-            for lo=1:size(field,4)
-                myz=find(z(:,la,lo) > mld(tt,la,lo),1,type);
-                if ~isempty(myz)
-                    fldint(tt,la,lo)=field(tt,myz,la,lo);
-                end
-            end
-        end
+    nt   = size(field, 1);
+    nz   = size(field, 2);
+    nlat = size(field, 3);
+    nlon = size(field, 4);
+
+    % Boolean mask: True where depth level > MLD  -> (nt, nz, nlat, nlon)
+    z_4d   = reshape(z,   [1,  nz, nlat, nlon]);
+    mld_4d = reshape(mld, [nt,  1, nlat, nlon]);
+    below  = bsxfun(@gt, z_4d, mld_4d);
+
+    % Whether any sub-MLD level exists at each (t, lat, lon)
+    has_valid = reshape(any(below, 2), [nt, nlat, nlon]);
+
+    % Select the target depth level using a cumsum trick:
+    %   cumsum(below, 2) == 1  marks exactly the first True along depth.
+    if strcmp(type, 'first')
+        pick = (cumsum(below, 2) == 1) & below;          % (nt, nz, nlat, nlon)
+    else  % 'last'
+        flipped = flip(below, 2);
+        pick    = flip((cumsum(flipped, 2) == 1) & flipped, 2);
     end
+
+    % Sum field over the single selected level -> (nt, nlat, nlon)
+    fldint = reshape(sum(double(field) .* pick, 2), [nt, nlat, nlon]);
+
+    % Zero out positions where no sub-MLD level was found
+    fldint(~has_valid) = 0;
 end
