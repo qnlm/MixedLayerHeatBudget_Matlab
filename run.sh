@@ -23,7 +23,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MAIN_SCRIPT="${SCRIPT_DIR}/heat_budget_rd_lme.py"
 LOG_DIR="${SCRIPT_DIR}/logs"
 LOG_FILE="${LOG_DIR}/heat_budget_$(date +%Y%m%d_%H%M%S).log"
-OUT_DIR="/glade/p/cesm/palwg_dev/LME/proc/samantha/LME_heatbudget"
+OUT_DIR="${HEAT_BUDGET_OUT_DIR:-/glade/p/cesm/palwg_dev/LME/proc/samantha/LME_heatbudget}"
 REQUIRED_PKGS=(numpy netCDF4 cftime scipy)
 
 # ---------------------------------------------------------------------------
