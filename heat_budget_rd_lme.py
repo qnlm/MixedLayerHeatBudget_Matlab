@@ -49,7 +49,7 @@ regbox = [float(x) for x in os.environ['REGBOX'].split()]
 # Single run name and date chunk to process (set by the outer bash loop)
 runname = os.environ['RUNNAME']
 date    = os.environ['DATE']
-ensname = os.environ.get('ENSNAME', '')   # used for informational output only
+ensname = os.environ.get('ENSNAME', '')   # optional label for display only; empty string if not set
 
 
 # ---------------------------------------------------------------------------

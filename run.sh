@@ -191,6 +191,10 @@ info "Log file: ${LOG_FILE}"
 
 cd "${SCRIPT_DIR}"
 
+# Redirect all subsequent stdout+stderr to both terminal and the log file.
+# This opens the log once rather than on every Python invocation.
+exec > >(tee -a "${LOG_FILE}") 2>&1
+
 for ensname in "${ensnames[@]}"; do
     runs_var="runs_${ensname}[@]"
     for runname in "${!runs_var}"; do
@@ -200,8 +204,8 @@ for ensname in "${ensnames[@]}"; do
             export ENSNAME="${ensname}"
             export RUNNAME="${runname}"
             export DATE="${date}"
-            python3 "${MAIN_SCRIPT}" 2>&1 | tee -a "${LOG_FILE}"
-            STATUS=${PIPESTATUS[0]}
+            python3 "${MAIN_SCRIPT}"
+            STATUS=$?
             if [[ ${STATUS} -ne 0 ]]; then
                 error "Python exited with status ${STATUS}. See ${LOG_FILE}."
             fi
