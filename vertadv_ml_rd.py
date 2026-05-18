@@ -62,6 +62,8 @@ def vertadv_ml_rd(time, lat, lon, mld, umld, vmld, Tmld, Tsub, wsub, mon, yr, yr
     fwd_lat, bwd_lat = _pad_idx(nlat)
 
     # zonal gradient: (nt, nlat, nlon)
+    # bwd_lon / fwd_lon are shape-(nlon+1,) padded-index arrays used for
+    # centred-difference finite differences (see _pad_idx).
     dH_x   = mld[:, :, fwd_lon] - mld[:, :, bwd_lon]                # (nt, nlat, nlon+1)
     dHtmp2 = dH_x * np.cos(latarr[:, bwd_lon]) / (lonarr[:, fwd_lon] - lonarr[:, bwd_lon])
     dHdx   = 0.5 * (dHtmp2[:, :, :-1] + dHtmp2[:, :, 1:]) / RE     # (nt, nlat, nlon)

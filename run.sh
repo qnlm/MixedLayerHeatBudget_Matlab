@@ -50,6 +50,10 @@
 #   DATES_JSON          JSON array of date-range strings "YYYYMM-YYYYMM"
 #                       Default: ["520001-530012"]
 #
+#   NOTE: when overriding JSON variables from the command line, wrap the value
+#   in single quotes to avoid shell interpretation of the double quotes, e.g.:
+#     ENSNAMES_JSON='["CTRL","FWFIX"]' ./run.sh
+#
 # The script:
 #   1. Checks for required Python 3 interpreter
 #   2. Installs missing Python packages (numpy, netCDF4, cftime)

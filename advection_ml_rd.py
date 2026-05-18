@@ -137,6 +137,8 @@ def advection_ml_rd(salt, uvel, vvel, lat, lon, time, yr, mon, yrclim):
 
     # ------------------------------------------------------------------
     # 7. Monthly-climatological mean of the eddy–eddy cross-terms
+    #    For each month mm, compute the time-mean of all matching time
+    #    steps and broadcast the result back to those same steps.
     # ------------------------------------------------------------------
     mnupdSpdx = np.zeros_like(salt)
     mnvpdSpdy = np.zeros_like(salt)

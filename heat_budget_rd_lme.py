@@ -329,7 +329,7 @@ for ee, ensname in enumerate(ensnames):
                 Tmld, umld, vmld, tlat, tlon,
                 time_vals, yr, mon, yrclim)
 
-            # dTdt is returned in K/day  →  convert to K/s
+            # dTdt from advection_ml_rd is in K/day → convert to K/s
             dTdt = dTdt / 86400.0
 
             # ----------------------------------------------------------------
