@@ -19,6 +19,10 @@ grid.  Each output file is placed in the same directory as its source file and
 named by appending ``_mod`` before the ``.nc`` extension
 (e.g. ``foo.nc`` → ``foo_mod.nc``).
 
+In addition, a ratio file ``<stem_of_A>_ratio.nc`` is written containing
+``ratio = sub_a / sub_b`` for every common spatial variable (NaN where
+*sub_b* is zero or non-finite).
+
 Usage
 -----
     python verify_results.py <nc_file_a> <nc_file_b> [options]
@@ -33,7 +37,7 @@ Optional flags
     --atol VALUE    Absolute tolerance for np.allclose. Default: 1e-6
     --rtol VALUE    Relative tolerance for np.allclose. Default: 1e-5
     --verbose       Print per-point diff statistics for failing variables.
-    --no-output     Skip writing the _mod NetCDF output files.
+    --no-output     Skip writing the _mod and _ratio NetCDF output files.
 """
 
 import argparse
@@ -164,6 +168,12 @@ def _mod_path(src_path):
     return base + '_mod' + (ext if ext else '.nc')
 
 
+def _ratio_path(path_a):
+    """Return the output path for the ratio file: <stem_of_A>_ratio.nc."""
+    base, ext = os.path.splitext(path_a)
+    return base + '_ratio' + (ext if ext else '.nc')
+
+
 def _write_mod_nc(src_path, out_path, lat_idx, lon_idx, nlat_src, nlon_src):
     """
     Write a common-grid subset of *src_path* to *out_path*.
@@ -255,6 +265,68 @@ def _write_mod_nc(src_path, out_path, lat_idx, lon_idx, nlat_src, nlon_src):
                         data = data[lat_idx, :, :][:, lon_idx, :]
 
             dst_var[:] = data
+
+
+def _write_ratio_nc(out_path, ratio_vars, tlat_sub, tlon_sub,
+                    tlat_name, tlon_name):
+    """
+    Write ratio arrays (sub_a / sub_b) for all common spatial variables to
+    a single NetCDF4 file.
+
+    Parameters
+    ----------
+    out_path   : str
+    ratio_vars : dict  {vname: (ndarray, dim_names_tuple)}
+                 Arrays are in (..., lat, lon) layout; NaN where sub_b == 0
+                 or either operand is NaN/fill.
+    tlat_sub, tlon_sub : (n_lat, n_lon) arrays – common-grid coordinates from A
+    tlat_name, tlon_name : str – names to use for the coordinate variables
+    """
+    if not ratio_vars:
+        return
+
+    if os.path.exists(out_path):
+        os.remove(out_path)
+
+    with nc4.Dataset(out_path, 'w', format='NETCDF4') as dst:
+        # ---- Collect all needed dimension names and sizes ------------------
+        dim_sizes = {}
+        for arr, dims in ratio_vars.values():
+            for dname, dsize in zip(dims, arr.shape):
+                if dname in dim_sizes and dim_sizes[dname] != dsize:
+                    raise ValueError(
+                        f"Conflicting size for dimension '{dname}': "
+                        f"{dim_sizes[dname]} vs {dsize}")
+                dim_sizes[dname] = dsize
+
+        for dname, dsize in dim_sizes.items():
+            dst.createDimension(dname, dsize)
+
+        # ---- Write TLAT / TLONG coordinate variables -----------------------
+        # Determine the lat/lon dimension names from the last two dims of the
+        # first ratio variable.
+        lat_dim = lon_dim = None
+        for arr, dims in ratio_vars.values():
+            if len(dims) >= 2:
+                lat_dim = dims[-2]
+                lon_dim = dims[-1]
+                break
+
+        if lat_dim is not None and lon_dim is not None:
+            tlat_var = dst.createVariable(tlat_name, 'f8', (lat_dim, lon_dim))
+            tlat_var.units = 'degrees_north'
+            tlat_var[:] = tlat_sub
+            tlon_var = dst.createVariable(tlon_name, 'f8', (lat_dim, lon_dim))
+            tlon_var.units = 'degrees_east'
+            tlon_var[:] = tlon_sub
+
+        # ---- Write ratio variables -----------------------------------------
+        for vname, (arr, dims) in ratio_vars.items():
+            v = dst.createVariable(vname, 'f8', dims, fill_value=np.nan)
+            v.long_name = f'ratio of file_a to file_b ({vname})'
+            v[:] = arr
+
+    print(f"  Written: {out_path}")
 
 
 # ---------------------------------------------------------------------------
@@ -352,6 +424,7 @@ def compare(path_a, path_b, tol=0.001, atol=1e-6, rtol=1e-5, verbose=False,
 
     # ---- Compare each variable --------------------------------------------
     all_pass = True
+    ratio_vars = {}   # {vname: (ratio_array, dim_names_tuple)}
 
     # Column widths: Variable, Shape_A, MaxAbsDiff, RMSE, MeanAbsDiff,
     #                Corr, N_bad, Bad%, allclose
@@ -400,6 +473,22 @@ def compare(path_a, path_b, tol=0.001, atol=1e-6, rtol=1e-5, verbose=False,
             print(f"  [SKIP] '{vname}': all NaN / fill in common region")
             continue
 
+        # Compute ratio = sub_a / sub_b; NaN where sub_b is zero or non-finite
+        with np.errstate(divide='ignore', invalid='ignore'):
+            ratio = np.where(np.isfinite(sub_b) & (sub_b != 0),
+                             sub_a / sub_b, np.nan)
+
+        # Determine dimension names in file A, adjusted for any transposition
+        # performed by _spatial_shape ((lat, lon, t) → (t, lat, lon)).
+        orig_a = data_a[vname]
+        orig_dims = dims_a[vname]
+        if orig_a.ndim == 3 and orig_a.shape[:2] == (nlat_a, nlon_a):
+            # was (lat, lon, t) layout → _spatial_shape transposed to (t, lat, lon)
+            adj_dims = (orig_dims[2], orig_dims[0], orig_dims[1])
+        else:
+            adj_dims = orig_dims
+        ratio_vars[vname] = (ratio, adj_dims)
+
         n_valid  = int(mask.sum())
         max_abs  = float(np.max(np.abs(diff[mask])))
         rmse     = float(np.sqrt(np.mean(diff[mask] ** 2)))
@@ -437,6 +526,13 @@ def compare(path_a, path_b, tol=0.001, atol=1e-6, rtol=1e-5, verbose=False,
                       f"B={sub_b[idx]:.8g}  diff={diff[idx]:.3e}")
 
     print('-' * sum(col_w))
+
+    # ---- Write ratio output file -------------------------------------------
+    if write_output and ratio_vars:
+        print("\nWriting ratio output file …")
+        _write_ratio_nc(_ratio_path(path_a), ratio_vars,
+                        tlat_a_sub, tlon_a_sub, tlat_name_a, tlon_name_a)
+
     verdict = 'ALL PASS ✓' if all_pass else 'SOME FAILURES ✗'
     print(f"\n{'OVERALL RESULT':>20}: {verdict}")
     return all_pass
