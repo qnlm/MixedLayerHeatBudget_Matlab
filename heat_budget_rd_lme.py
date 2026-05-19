@@ -189,11 +189,15 @@ with nc4.Dataset(GRID_FILE) as nc:
 
 # Identify the row/column indices that fall within the region of interest.
 # REF_COL (0-indexed) is used as the reference row/column for band selection.
-# A small epsilon is added to the bounds to match MATLAB's inclusive boundary
-# behaviour: float32 grid values may differ from the exact bound by a tiny
-# amount after float32→float64 conversion, which can cause Python to exclude
-# one boundary row/column that MATLAB includes.
-boundary_tolerance = 1e-6
+# A tolerance is added to the bounds to match MATLAB's inclusive boundary
+# behaviour: MATLAB reads the grid as float32 and compares directly, so a
+# grid value stored as float32 ≤ regbox boundary is always selected.  After
+# float32→float64 conversion the same value can exceed the boundary by up to
+# ~1.2×10⁻⁶ (float32 machine epsilon ≈ 1.19×10⁻⁷ multiplied by a value of
+# ~10°).  A tolerance of 1e-4 is chosen as 100× that maximum conversion error,
+# large enough to capture any such float32 boundary row while remaining far
+# smaller than the ~1° ocean grid spacing, ensuring no extra rows are included.
+boundary_tolerance = 1e-4
 mylat = np.where(
     (tlat_full[:, REF_COL] >= regbox[0] - boundary_tolerance) & (tlat_full[:, REF_COL] <= regbox[1] + boundary_tolerance)
 )[0]

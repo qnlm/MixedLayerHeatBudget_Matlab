@@ -227,11 +227,14 @@ def compare(path_a, path_b, tol=0.001, atol=1e-6, rtol=1e-5, verbose=False):
     # ---- Compare each variable --------------------------------------------
     all_pass = True
 
-    col_w = [22, 16, 12, 12, 12, 10, 14]
+    # Column widths: Variable, Shape_A, MaxAbsDiff, RMSE, MeanAbsDiff,
+    #                Corr, N_bad, Bad%, allclose
+    col_w = [22, 16, 12, 12, 12, 10, 8, 8, 14]
     header = (f"{'Variable':<{col_w[0]}} {'Shape_A':<{col_w[1]}} "
               f"{'MaxAbsDiff':>{col_w[2]}} {'RMSE':>{col_w[3]}} "
               f"{'MeanAbsDiff':>{col_w[4]}} {'Corr':>{col_w[5]}} "
-              f"{'allclose':>{col_w[6]}}")
+              f"{'N_bad':>{col_w[6]}} {'Bad%':>{col_w[7]}} "
+              f"{'allclose':>{col_w[8]}}")
     print(header)
     print('-' * sum(col_w))
 
@@ -271,6 +274,7 @@ def compare(path_a, path_b, tol=0.001, atol=1e-6, rtol=1e-5, verbose=False):
             print(f"  [SKIP] '{vname}': all NaN / fill in common region")
             continue
 
+        n_valid  = int(mask.sum())
         max_abs  = float(np.max(np.abs(diff[mask])))
         rmse     = float(np.sqrt(np.mean(diff[mask] ** 2)))
         mean_abs = float(np.mean(np.abs(diff[mask])))
@@ -280,8 +284,13 @@ def compare(path_a, path_b, tol=0.001, atol=1e-6, rtol=1e-5, verbose=False):
         corr = (float(np.corrcoef(a_flat, b_flat)[0, 1])
                 if a_flat.std() > 0 and b_flat.std() > 0 else float('nan'))
 
-        close = bool(np.allclose(sub_a[mask], sub_b[mask],
-                                 atol=atol, rtol=rtol, equal_nan=False))
+        # Count points that fail the tolerance test
+        not_close_mask = ~np.isclose(sub_a, sub_b,
+                                     atol=atol, rtol=rtol, equal_nan=True)
+        n_bad   = int((not_close_mask & mask).sum())
+        pct_bad = 100.0 * n_bad / n_valid if n_valid > 0 else float('nan')
+
+        close = (n_bad == 0)
         if not close:
             all_pass = False
 
@@ -290,15 +299,14 @@ def compare(path_a, path_b, tol=0.001, atol=1e-6, rtol=1e-5, verbose=False):
         print(f"{vname:<{col_w[0]}} {shape_str:<{col_w[1]}} "
               f"{max_abs:>{col_w[2]}.3e} {rmse:>{col_w[3]}.3e} "
               f"{mean_abs:>{col_w[4]}.3e} {corr:>{col_w[5]}.5f} "
-              f"{tick + ' ' + str(close):>{col_w[6]}}")
+              f"{n_bad:>{col_w[6]}d} {pct_bad:>{col_w[7]}.3f} "
+              f"{tick + ' ' + str(close):>{col_w[8]}}")
 
         if verbose and not close:
-            bad = np.where(~np.isclose(sub_a, sub_b,
-                                       atol=atol, rtol=rtol, equal_nan=True))
-            n_bad = len(bad[0])
+            bad_pts = np.where(not_close_mask & mask)
             print(f"    → {n_bad} mismatched points (first 5):")
             for k in range(min(5, n_bad)):
-                idx = tuple(x[k] for x in bad)
+                idx = tuple(x[k] for x in bad_pts)
                 print(f"       idx={idx}  A={sub_a[idx]:.8g}  "
                       f"B={sub_b[idx]:.8g}  diff={diff[idx]:.3e}")
 
