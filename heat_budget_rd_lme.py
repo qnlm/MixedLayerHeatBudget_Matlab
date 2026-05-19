@@ -274,10 +274,10 @@ elif DATA_FORMAT_OPTION == 3:
                     qsw  = np.zeros_like(qnet)
                     mld  = np.zeros_like(qnet)
                 time_vals[count] = _read_var(nc, 'time')[0]
-                temp[count] = _read_var(nc, 'TEMP',    0, slice(NZ), mylat, slice(None))[:, :, mylon]
-                uvel[count] = _read_var(nc, 'UVEL',    0, slice(NZ), mylat, slice(None))[:, :, mylon] / 100.0
-                vvel[count] = _read_var(nc, 'VVEL',    0, slice(NZ), mylat, slice(None))[:, :, mylon] / 100.0
-                wvel[count] = _read_var(nc, 'WVEL',    0, slice(NZ), mylat, slice(None))[:, :, mylon] / 100.0
+                temp[count] = _read_var(nc, 'TEMP',    0, slice(NZ), slice(None), slice(None))[:, mylat, :][:, :, mylon]
+                uvel[count] = _read_var(nc, 'UVEL',    0, slice(NZ), slice(None), slice(None))[:, mylat, :][:, :, mylon] / 100.0
+                vvel[count] = _read_var(nc, 'VVEL',    0, slice(NZ), slice(None), slice(None))[:, mylat, :][:, :, mylon] / 100.0
+                wvel[count] = _read_var(nc, 'WVEL',    0, slice(NZ), slice(None), slice(None))[:, mylat, :][:, :, mylon] / 100.0
                 qnet[count] = _read_var(nc, 'SHF',     0, mylat, slice(None))[:, mylon]
                 qsw[count]  = _read_var(nc, 'SHF_QSW', 0, mylat, slice(None))[:, mylon]
                 mld[count]  = _read_var(nc, 'HMXL',    0, mylat, slice(None))[:, mylon] / 100.0
