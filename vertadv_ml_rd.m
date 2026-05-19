@@ -83,7 +83,7 @@ function [w_entr,wmdTmdz,wpdTmdz,wmdTpdz,wpdTpdz,mnwpdTpdz]=vertadv_ml_rd(time,l
         % Climatological mean advection of anomalous gradient
         tmp1=Tmld(tt,:,:)-Tm_mld(mym,:,:);
         tmp2=Tsub(tt,:,:)-Tm_sub(mym,:,:);
-        wmdTpdz(tt,:,:)=wsgn(mym,:,:).*wm(mym,:,:,:).*(tmp1-tmp2)./mld(tt,:,:);
+        wmdTpdz(tt,:,:)=wsgn(mym,:,:).*wm(mym,:,:).*(tmp1-tmp2)./mld(tt,:,:);
 
         % Anomalous advection of anomalous gradient
         wpdTpdz(tt,:,:)=wsgn(mym,:,:).*wtmp.*(tmp1-tmp2)./mld(tt,:,:);
