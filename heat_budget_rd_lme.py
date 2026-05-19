@@ -193,12 +193,12 @@ with nc4.Dataset(GRID_FILE) as nc:
 # behaviour: float32 grid values may differ from the exact bound by a tiny
 # amount after float32→float64 conversion, which can cause Python to exclude
 # one boundary row/column that MATLAB includes.
-_eps = 1e-6
+boundary_tolerance = 1e-6
 mylat = np.where(
-    (tlat_full[:, REF_COL] >= regbox[0] - _eps) & (tlat_full[:, REF_COL] <= regbox[1] + _eps)
+    (tlat_full[:, REF_COL] >= regbox[0] - boundary_tolerance) & (tlat_full[:, REF_COL] <= regbox[1] + boundary_tolerance)
 )[0]
 mylon = np.where(
-    (tlon_full[REF_COL, :] >= regbox[2] - _eps) & (tlon_full[REF_COL, :] <= regbox[3] + _eps)
+    (tlon_full[REF_COL, :] >= regbox[2] - boundary_tolerance) & (tlon_full[REF_COL, :] <= regbox[3] + boundary_tolerance)
 )[0]
 
 tlat = tlat_full[np.ix_(mylat, mylon)]
