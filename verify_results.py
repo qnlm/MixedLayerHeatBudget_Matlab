@@ -13,6 +13,12 @@ spatial tolerance, then performs element-wise comparison on the matched subset.
 All variables that exist in *both* files and have a spatial (lat × lon) shape
 are compared automatically — no hard-coded variable list is needed.
 
+After the common grid is computed the script writes two trimmed NetCDF4 output
+files, one per input file, containing every variable restricted to the common
+grid.  Each output file is placed in the same directory as its source file and
+named by appending ``_mod`` before the ``.nc`` extension
+(e.g. ``foo.nc`` → ``foo_mod.nc``).
+
 Usage
 -----
     python verify_results.py <nc_file_a> <nc_file_b> [options]
@@ -27,9 +33,11 @@ Optional flags
     --atol VALUE    Absolute tolerance for np.allclose. Default: 1e-6
     --rtol VALUE    Relative tolerance for np.allclose. Default: 1e-5
     --verbose       Print per-point diff statistics for failing variables.
+    --no-output     Skip writing the _mod NetCDF output files.
 """
 
 import argparse
+import os
 import sys
 import numpy as np
 import netCDF4 as nc4
@@ -147,10 +155,114 @@ def _spatial_shape(arr, nlat, nlon):
 
 
 # ---------------------------------------------------------------------------
+# Output: write common-grid NC files
+# ---------------------------------------------------------------------------
+
+def _mod_path(src_path):
+    """Return the output path for a trimmed-grid copy: <stem>_mod.nc."""
+    base, ext = os.path.splitext(src_path)
+    return base + '_mod' + (ext if ext else '.nc')
+
+
+def _write_mod_nc(src_path, out_path, lat_idx, lon_idx, nlat_src, nlon_src):
+    """
+    Write a common-grid subset of *src_path* to *out_path*.
+
+    Every spatial variable in the source file is trimmed to *lat_idx* /
+    *lon_idx*.  Non-spatial variables (time, month, …) are copied verbatim.
+    Variable attributes and dimension names are preserved from the source.
+
+    Parameters
+    ----------
+    src_path  : str   – path to the original NetCDF4 file
+    out_path  : str   – path for the output file (overwritten if it exists)
+    lat_idx   : ndarray(int) – row indices in the source to keep
+    lon_idx   : ndarray(int) – column indices in the source to keep
+    nlat_src  : int  – total number of lat rows in the source
+    nlon_src  : int  – total number of lon cols in the source
+    """
+    n_lat = len(lat_idx)
+    n_lon = len(lon_idx)
+
+    if os.path.exists(out_path):
+        os.remove(out_path)
+
+    with nc4.Dataset(src_path) as src, nc4.Dataset(out_path, 'w',
+                                                   format='NETCDF4') as dst:
+        # ---- Copy global attributes ----------------------------------------
+        dst.setncatts({k: src.getncattr(k) for k in src.ncattrs()})
+
+        # ---- Find which dimension names correspond to lat / lon axes --------
+        # Inspect all variables: if the last two dimensions have sizes
+        # (nlat_src, nlon_src) those are the spatial dimension names.
+        lat_dim_names = set()
+        lon_dim_names = set()
+        for var in src.variables.values():
+            sh = var.shape
+            dm = var.dimensions
+            if len(sh) >= 2:
+                if sh[-2] == nlat_src and sh[-1] == nlon_src:
+                    lat_dim_names.add(dm[-2])
+                    lon_dim_names.add(dm[-1])
+                elif sh[0] == nlat_src and sh[1] == nlon_src:
+                    # transposed (lat, lon, ...) layout
+                    lat_dim_names.add(dm[0])
+                    lon_dim_names.add(dm[1])
+
+        # ---- Recreate dimensions -------------------------------------------
+        for dname, dobj in src.dimensions.items():
+            if dname in lat_dim_names:
+                dst.createDimension(dname, n_lat)
+            elif dname in lon_dim_names:
+                dst.createDimension(dname, n_lon)
+            else:
+                dst.createDimension(dname,
+                                    None if dobj.isunlimited() else len(dobj))
+
+        # ---- Copy / trim each variable -------------------------------------
+        for vname, src_var in src.variables.items():
+            sh = src_var.shape
+            dm = src_var.dimensions
+
+            # Determine fill_value kwarg (only pass if the source has one)
+            fv_kwargs = {}
+            if hasattr(src_var, '_FillValue'):
+                fv_kwargs['fill_value'] = src_var._FillValue
+
+            dst_var = dst.createVariable(vname, src_var.dtype, dm,
+                                         **fv_kwargs)
+
+            # Copy variable attributes (skip _FillValue — already set above)
+            dst_var.setncatts({k: src_var.getncattr(k)
+                               for k in src_var.ncattrs()
+                               if k != '_FillValue'})
+
+            data = src_var[:]
+
+            # Trim spatial dimensions where needed
+            if len(sh) >= 2:
+                if sh[-2] == nlat_src and sh[-1] == nlon_src:
+                    # (..., lat, lon) layout
+                    if data.ndim == 2:
+                        data = data[np.ix_(lat_idx, lon_idx)]
+                    elif data.ndim == 3:
+                        data = data[:, lat_idx, :][:, :, lon_idx]
+                elif sh[0] == nlat_src and sh[1] == nlon_src:
+                    # (lat, lon, ...) layout
+                    if data.ndim == 2:
+                        data = data[np.ix_(lat_idx, lon_idx)]
+                    elif data.ndim == 3:
+                        data = data[lat_idx, :, :][:, lon_idx, :]
+
+            dst_var[:] = data
+
+
+# ---------------------------------------------------------------------------
 # Main comparison
 # ---------------------------------------------------------------------------
 
-def compare(path_a, path_b, tol=0.001, atol=1e-6, rtol=1e-5, verbose=False):
+def compare(path_a, path_b, tol=0.001, atol=1e-6, rtol=1e-5, verbose=False,
+            write_output=True):
     print(f"\n{'='*72}")
     print(f"File A (MATLAB) : {path_a}")
     print(f"File B (Python) : {path_b}")
@@ -169,10 +281,13 @@ def compare(path_a, path_b, tol=0.001, atol=1e-6, rtol=1e-5, verbose=False):
     tlat_name_b = _find_coord(data_b, _TLAT_CANDIDATES)
     tlon_name_b = _find_coord(data_b, _TLONG_CANDIDATES)
 
-    for label, name in [('TLAT in A', tlat_name_a), ('TLONG in A', tlon_name_a),
-                        ('TLAT in B', tlat_name_b), ('TLONG in B', tlon_name_b)]:
+    for label, name, candidates in [
+            ('TLAT in A',  tlat_name_a, _TLAT_CANDIDATES),
+            ('TLONG in A', tlon_name_a, _TLONG_CANDIDATES),
+            ('TLAT in B',  tlat_name_b, _TLAT_CANDIDATES),
+            ('TLONG in B', tlon_name_b, _TLONG_CANDIDATES)]:
         if name is None:
-            sys.exit(f"ERROR: cannot find {label} — tried {_TLAT_CANDIDATES}")
+            sys.exit(f"ERROR: cannot find {label} — tried {candidates}")
 
     tlat_a = data_a[tlat_name_a]
     tlon_a = data_a[tlon_name_a]
@@ -208,6 +323,17 @@ def compare(path_a, path_b, tol=0.001, atol=1e-6, rtol=1e-5, verbose=False):
     print(f"\nCoordinate residuals after alignment:")
     print(f"  max |TLAT_A  - TLAT_B|  = {np.nanmax(np.abs(tlat_a_sub - tlat_b_sub)):.3e} °")
     print(f"  max |TLONG_A - TLONG_B| = {np.nanmax(np.abs(tlon_a_sub - tlon_b_sub)):.3e} °\n")
+
+    # ---- Write common-grid output files ------------------------------------
+    if write_output:
+        print("Writing common-grid output files …")
+        nlat_a, nlon_a = tlat_a.shape
+        nlat_b, nlon_b = tlat_b.shape
+        _write_mod_nc(path_a, _mod_path(path_a),
+                      lat_idx_a, lon_idx_a, nlat_a, nlon_a)
+        _write_mod_nc(path_b, _mod_path(path_b),
+                      lat_idx_b, lon_idx_b, nlat_b, nlon_b)
+        print()
 
     # ---- Discover variables present in both files --------------------------
     skip = _SKIP_VARS | {tlat_name_a, tlon_name_a, tlat_name_b, tlon_name_b}
@@ -333,6 +459,8 @@ def _parse_args():
                    help='Relative tolerance for np.allclose (default: 1e-5)')
     p.add_argument('--verbose', action='store_true',
                    help='Print per-point details for failing variables')
+    p.add_argument('--no-output', dest='no_output', action='store_true',
+                   help='Skip writing the common-grid _mod NetCDF output files')
     return p.parse_args()
 
 
@@ -345,5 +473,6 @@ if __name__ == '__main__':
         atol=args.atol,
         rtol=args.rtol,
         verbose=args.verbose,
+        write_output=not args.no_output,
     )
     sys.exit(0 if ok else 1)
